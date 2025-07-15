@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+magick \
+	xc:"#000000" \
+	xc:"#FFFFFF" \
+	xc:"#FF0000" \
+	xc:"#00FF00" \
+	xc:"#0000FF" \
+	xc:"#FFFF00" \
+	xc:"#FFA500" \
+	+append palette_7color.gif
