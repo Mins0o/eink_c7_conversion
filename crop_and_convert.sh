@@ -6,20 +6,21 @@ set -e
 # --- Script Arguments ---
 # $1: The path to the image (required)
 # $2: The dither diffusion amount (optional, defaults to 85)
-# $3: The saturation percentage (optional, defaults to 100)
-# $4: The black level percentage (optional, defaults to 0)
-# $5: The contrast adjustment (optional, defaults to 1)
-# $6: The shadow brightening strength (optional, defaults to 0)
-# $7: The dither method (optional, defaults to FloydSteinberg)
+# $3: The adaptive blue reduction strength (optional, defaults to 0)
+# $4: The saturation percentage (optional, defaults to 100)
+# $5: The black level percentage (optional, defaults to 0)
+# $6: The contrast adjustment (optional, defaults to 1)
+# $7: The shadow brightening strength (optional, defaults to 0)
+# $8: The dither method (optional, defaults to FloydSteinberg)
 
 # Check if the first argument (image path) is empty
 if [ -z "$1" ]; then
-  echo "Usage: $0 <path_to_image> [diffusion_amount] [saturation] [black_level] [contrast] [shadows] [dither_method]"
+  echo "Usage: $0 <path_to_image> [diffusion_amount] [blue_reduction_strength] [saturation] [black_level] [contrast] [shadows] [dither_method]"
   echo ""
-  echo "Example: $0 photo.jpg 90 110 10 3 5 FloydSteinberg"
-  echo " $0 image.jpg 80 130 0 -2 2"
-  # echo "$0 image.jpg 75 120 0 -4 6"
-  # echo "$0 image.jpg 75 130 20 -4 3"
+  echo "Example: $0 photo.jpg 90 1.5 110 10 3 5 FloydSteinberg"
+  echo " $0 image.jpg 80 0 130 0 -2 2"
+  # echo "$0 image.jpg 75 0 120 0 -4 6"
+  # echo "$0 image.jpg 75 0 130 20 -4 3"
   echo ""
   echo "Processes an image for an 800x480 or 480x800 7-color e-ink display."
   echo "It auto-detects orientation, crops, resizes, and adjusts the image."
@@ -47,6 +48,12 @@ if [ -z "$1" ]; then
   echo "  FloydSteinberg - Good quality, the original error-diffusion dither."
   echo "  Riemersma      - Uses a Hilbert curve for a less structured look."
   echo "  None           - No dithering, just maps to the nearest color."
+  echo ""
+  echo "Blue Reduction (default: 0):"
+  echo "  A strength factor (e.g., '1.0'-'3.0') to reduce blue in pixels"
+  echo "  where blue is not the dominant color. '0' disables adjustment."
+  echo "  You can visualize the effect of this parameter by running:"
+  echo "  python plot_blue_reduction_effect.py [strength]"
   # echo "  FloydSteinberg - Good quality, the original error-diffusion dither."
   # echo "  Stucki         - Sharper and cleaner than Floyd-Steinberg, good for details."
   # echo "  Jarvis         - Softer and less grainy than Stucki, but can be slightly blurry."
@@ -61,20 +68,22 @@ mkdir -p converted
 image="$1"
 # Use the value of the 2nd argument ($2), or use 85 if it's not set
 diffusion=${2:-85}
-# Use the value of the 3rd argument ($3), or use 100 if it's not set
-saturation=${3:-100}
-# Use the value of the 4th argument ($4), or use 0 if it's not set
-black_level=${4:-0}
-# Use the value of the 5th argument ($5), or use 1 if it's not set
-contrast=${5:-1}
-# Use the value of the 6th argument ($6), or use 0 if it's not set
-shadows=${6:-0}
-# Use the value of the 7th argument ($7), or use FloydSteinberg if it's not set
-dither_method=${7:-FloydSteinberg}
+# Use the value of the 3rd argument ($3), or use 0 if it's not set
+blue_reduction_strength=${3:-0}
+# Use the value of the 4th argument ($4), or use 100 if it's not set
+saturation=${4:-100}
+# Use the value of the 5th argument ($5), or use 0 if it's not set
+black_level=${5:-0}
+# Use the value of the 6th argument ($6), or use 1 if it's not set
+contrast=${6:-1}
+# Use the value of the 7th argument ($7), or use 0 if it's not set
+shadows=${7:-0}
+# Use the value of the 8th argument ($8), or use FloydSteinberg if it's not set
+dither_method=${8:-FloydSteinberg}
 
 output_path=./converted/"${image%.*}_converted.bmp"
 
-echo "Processing '$image' -> '$output_path' (Dither: ${dither_method}, Diffusion: ${diffusion}%, Saturation: ${saturation}%, Black Level: ${black_level}%, Contrast: ${contrast}, Shadows: ${shadows})"
+echo "Processing '$image' -> '$output_path' (Dither: ${dither_method}, Diffusion: ${diffusion}%, Saturation: ${saturation}%, Black Level: ${black_level}%, Contrast: ${contrast}, Shadows: ${shadows}, Blue Reduction: ${blue_reduction_strength})"
 
 # Get image dimensions to determine orientation
 width=$(identify -format "%w" "$image")
@@ -99,6 +108,23 @@ echo "Detected $orientation orientation, cropping to $crop_ratio and scaling to 
 
 # Prepare options for image adjustment
 adjustment_ops=()
+if [ "$blue_reduction_strength" != "0" ]; then
+    k=${blue_reduction_strength}
+
+    # Define the components of the -fx expression
+    # x is the ratio of blue in the pixel
+    # blue_reduction_scaler is a function of x that determines how much to scale the blue channel
+    # The final expression scales the blue channel (u.b) by this scaler.
+    fx_expression=" \
+        k = ${k}; \
+        ratio = u.b / (u.r + u.g + u.b + 0.000001); \
+        result = ((1/4)*(-4*pi^2*exp(3*ratio) + 6*pi*sin(2*pi*ratio) - 9*cos(2*pi*ratio) + 9 + 4*pi^2)*exp(3 - 3*ratio)/(pi^2*(1 - exp(3)))-1)*k+1; \
+        result * u.b \
+    "
+    
+    # Explicitly convert to RGB color space first to ensure proper channel separation
+    adjustment_ops+=(-colorspace RGB -channel B -fx "$fx_expression" -channel RGB)
+fi
 if [ "$black_level" != "0" ]; then
     # Raise the output black level to brighten shadows.
     # For example, a value of '10' makes pure black 10% gray.
@@ -118,7 +144,7 @@ if [ "$contrast" != "0" ]; then
         adjustment_ops+=("+sigmoidal-contrast" "${abs_contrast}x50%")
     else
         # Contrast is positive, so increase contrast.
-        adjustment_ops+=("-sigmoidal-contrast" "${contrast}x50%")
+        adjucstment_ops+=("-sigmoidal-contrast" "${contrast}x50%")
     fi
 fi
 if [ "$saturation" != "100" ]; then
@@ -141,5 +167,10 @@ convert "$output_path" \
     -remap palette_7color.gif \
     -type truecolor \
     BMP3:"$output_path"
+
+# Clean up any temporary files at the end
+if [[ -n "${temp_image:-}" && -f "$temp_image" ]]; then
+    rm -f "$temp_image"
+fi
 
 echo "Done."
