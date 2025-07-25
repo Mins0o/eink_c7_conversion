@@ -7,7 +7,7 @@ import numpy as np
 from PIL import Image, ImageEnhance, ImageOps
 import math
 
-def reduce_blue_in_pixel(r, g, b, strength, dark_strength=0, luminance_threshold=0.3):
+def reduce_blue_in_pixel(r, g, b, strength, dark_strength=0, luminance_threshold=0.35):
     """
     Reduce blue in a pixel based on blue dominance and darkness.
     
@@ -31,8 +31,16 @@ def reduce_blue_in_pixel(r, g, b, strength, dark_strength=0, luminance_threshold
     blue_ratio = b_norm / total
     shrunk_ratio = blue_ratio * 1.5  # 1.5 to shorten the curve
 
-    # Original blue reduction based on dominance
     reduction_factor = 1.0
+
+    # Additional reduction for dark pixels
+    if dark_strength > 0 and luminance < luminance_threshold:
+        # More blue reduction in darker areas
+        darkness_factor = 1 - (luminance / luminance_threshold)
+        additional_reduction = 1 - (dark_strength * darkness_factor * 0.1)  # Scale down the effect
+        reduction_factor *= additional_reduction
+
+    # Original blue reduction based on dominance
     if strength > 0:
         # Same formula as in the shell script
         pi = math.pi
@@ -44,13 +52,6 @@ def reduce_blue_in_pixel(r, g, b, strength, dark_strength=0, luminance_threshold
         result = ((1/4) * (-4*pi**2*exp_term + 6*pi*sin_term - 9*cos_term + 9 + 4*pi**2) *
                  math.exp(3 - 3*shrunk_ratio) / (pi**2 * (1 - exp_denom)) - 1) * strength + 1
         reduction_factor *= result
-    
-    # Additional reduction for dark pixels
-    if dark_strength > 0 and luminance < luminance_threshold:
-        # More blue reduction in darker areas
-        darkness_factor = 1 - (luminance / luminance_threshold)
-        additional_reduction = 1 - (dark_strength * darkness_factor * 0.1)  # Scale down the effect
-        reduction_factor *= additional_reduction
     
     # Apply reduction and clamp
     new_b = max(0, min(255, b_norm * reduction_factor * 255))
